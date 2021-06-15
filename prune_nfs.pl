@@ -12,38 +12,51 @@
 # The listed regular expressions are used to
 # determine which files to delete.
 # 
-# using `all` as the directory selector 
+# using `/` as the directory selector 
 # will apply it across all files/directories
 #########LEGEND##########
 # path/to/directory:
-#   - *.log
-#   - *.delete_me
+#   - \.log$       # (text.log)
+#   - \.delete_me$ # (foo.delete_me)
 #########################
 use strict;
 use warnings;
-use 5.30.0;
+use 5.28.1;
 use YAML qw(LoadFile DumpFile);
 use Data::Dumper;
 use Getopt::Long qw(GetOptions);
 use File::Find;
 Getopt::Long::Configure qw(gnu_getopt);
 
-my $PRUNE_CONF = "prune.yml";
-my $ROOT = "/srv/nfs";
-
 my $USAGE = "Usage: ./prune_nfs -d /srv/nfs -c /usr/local/etc/prune_nfs/prune.yml 
   OPTS:
-    --conf -c [conf.yml]
-    --dir -d [dir/]   
-    --help -h         bring up this menu
-    --verbose -v      print work
-    --dry-run -k      don't delete files 
-    --dbg-conf        print deserialized yaml
-    --dbg-catch       print what pattern caught the filepath";
+    --dir -d [dir/]
+    --conf -c [conf.yml]  configuration file - see prune.yml
+    --archive -a [dir/]   archive instead of deleting
+    --mtimegt -m [secs]   modify time greater than in seconds
+    
+    --help -h       bring up this menu
+    --verbose -v    print work
+    --dry-run -k    don't delete files 
+    --dbg-conf      print deserialized yaml
+    --dbg-catch     print what pattern caught the filepath";
 
 sub commit {
-  my ($pattern, $verbose, $dry, $dbg) = @_;
+  my ($root, $pattern, $verbose, $dry, $dbg, $mtimegt, $archive_path) = @_;
+  my $use_archive = 0;
+
+  if ($archive_path) {
+    mkdir $archive_path;
+    $use_archive=1;
+  }
+  
   if (-e and m/($pattern)/) {
+  
+    my $timestamp = (stat($File::Find::name))[9];
+    if (! time() - $timestamp > $mtimegt) {
+      return;
+    }
+    
     if ($verbose) {
       print "$File::Find::name";
       if ($dbg) {
@@ -53,7 +66,13 @@ sub commit {
     }
 
     if (not $dry) {
-      if (-f $File::Find::name) {
+      if ($use_archive == 1) {
+        my $tmp = $File::Find::dir;
+        $tmp =~ s/${root}//;
+        system("mkdir -p ${archive_path}/${tmp}");
+        qx/mv $File::Find::name $tmp/
+      }
+      elsif (-f $File::Find::name) {
         unlink($File::Find::name);
       }
       elsif (-d $File::Find::name) {
@@ -63,28 +82,31 @@ sub commit {
         print "Unknown operation for $File::Find::name";
       }
     }
-
   }
 }
 
 sub prune {
-  my ($conf, $root, $verbose, $dry, $dbg) = @_;
-  # my $conf = LoadFile("prune.yml");
+  my ($conf, $root, $verbose, $dry, $dbg, $mtimegt, $archive_path) = @_;
+  if (! -e $root) {
+    print "$root\ndoesn't exist\n";
+    exit(1);
+  }
+  
   while ((my $dir, my $pat_array) = each (%$conf)) {
     if (! -d "$root/$dir") {
-      print "$dir is not a directory";
+      print "$dir is not a directory\n";
       next;
     }
 
     if ($dbg) {
       # Run patterns individually so we know what caught what
       foreach my $pat (@$pat_array) {
-        find(sub { commit($pat, $verbose, $dry, $dbg); }, "$root/$dir");
+        find(sub { commit($root, $pat, $verbose, $dry, $dbg, $mtimegt, $archive_path); }, "$root/$dir");
       }
     }
     else {
       my $pattern = join("|", @$pat_array);
-      find(sub { commit($pattern, $verbose, $dry, $dbg); }, "$root/$dir");
+      find(sub { commit($root, $pattern, $verbose, $dry, $dbg, $mtimegt, $archive_path); }, "$root/$dir");
     }
   }
 }
@@ -110,10 +132,13 @@ sub main {
   my $conf = "";
   my $root = "";
   my $help_flag = 0;
-  my $dbg_flag = 0;
   my $verbose_flag = 0;
   my $dry_run_flag = 0;
+  my $modified_epoch_gt = 0;
+  my $archive_path = "";
+
   my $dbg_catch_flag = 0;
+  my $dbg_conf = 0;
 
   @ARGV == 0 and die2("no args");
 
@@ -121,24 +146,25 @@ sub main {
     'conf|c=s' => \$conf,
     'dir|d=s' => \$root,
     'help|h' => \$help_flag,
-    'dbg' => \$dbg_flag,
     'verbose|v' => \$verbose_flag,
     'dry-run|k' => \$dry_run_flag,
-    'dbg-catch' => \$dbg_catch_flag
+    'dbg-conf' => \$dbg_conf,
+    'dbg-catch' => \$dbg_catch_flag,
+    'archive|a=s' => \$archive_path,
+    'mtimegt|m=s' => \$modified_epoch_gt
   );
 
   not $root and die2("no directory");
   not $conf and die2("no conf");
 
-  my $ca = LoadFile($conf);
+  my $settings = LoadFile($conf);
 
-  if ($dbg_flag) {
-    dbg(LoadFile($conf));
-    exit 0;
+  if ($dbg_conf) {
+    dbg($settings);
   }
 
   else {
-    prune(LoadFile($conf), $root, $verbose_flag, $dry_run_flag, $dbg_catch_flag);
+    prune($settings, $root, $verbose_flag, $dry_run_flag, $dbg_catch_flag, int($modified_epoch_gt), $archive_path);
   }
 }
 
