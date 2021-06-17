@@ -26,6 +26,8 @@ use YAML qw(LoadFile DumpFile);
 use Data::Dumper;
 use Getopt::Long qw(GetOptions);
 use File::Find;
+use Cwd qw(getcwd abs_path);
+use File::Path qw(make_path remove_tree);
 Getopt::Long::Configure qw(gnu_getopt);
 
 my $USAGE = "Usage: ./prune_nfs -d /srv/nfs -c /usr/local/etc/prune_nfs/prune.yml 
@@ -33,8 +35,9 @@ my $USAGE = "Usage: ./prune_nfs -d /srv/nfs -c /usr/local/etc/prune_nfs/prune.ym
     --dir -d [dir/]
     --conf -c [conf.yml]  configuration file - see prune.yml
     --archive -a [dir/]   archive instead of deleting
-    --mtimegt -m [secs]   modify time greater than in seconds
+    --mtimegt -m [days]   modify time greater than in days
     
+    --copy          copy instead of moving when archiving
     --help -h       bring up this menu
     --verbose -v    print work
     --dry-run -k    don't delete files 
@@ -42,41 +45,48 @@ my $USAGE = "Usage: ./prune_nfs -d /srv/nfs -c /usr/local/etc/prune_nfs/prune.ym
     --dbg-catch     print what pattern caught the filepath";
 
 sub commit {
-  my ($root, $pattern, $verbose, $dry, $dbg, $mtimegt, $archive_path) = @_;
+  my ($root, $pattern, $verbose, $dry, $dbg, $mtimegt, $archive_path, $copy) = @_;
   my $use_archive = 0;
-
   if ($archive_path) {
-    mkdir $archive_path;
+    #qx/mkdir -p $archive_path/;
     $use_archive=1;
   }
   
   if (-e and m/($pattern)/) {
-  
-    my $timestamp = (stat($File::Find::name))[9];
-    if (! time() - $timestamp > $mtimegt) {
-      return;
-    }
-    
+    my $fp = $File::Find::name;
+    # my $sb = stat($File::Find::name);
+    # my $now = time();
+
+    # print "TIMESTAMP: %s [$now]\n", $sb->mtime;
+    # if (! $now - $sb->mtime > $mtimegt) {
+    #   return;
+    # }
+
     if ($verbose) {
-      print "$File::Find::name";
+      print "$fp";
       if ($dbg) {
         print " -- $pattern";
       }
       print "\n";
     }
 
+
     if (not $dry) {
-      if ($use_archive == 1) {
-        my $tmp = $File::Find::dir;
-        $tmp =~ s/${root}//;
-        system("mkdir -p ${archive_path}/${tmp}");
-        qx/mv $File::Find::name $tmp/
+      if ($use_archive == 1 && $File::Find::dir) {
+        my $dir = $File::Find::dir;
+        $dir =~ s/$root//;
+        
+        if ($copy) {
+          qx/cp $fp $archive_path$dir/;
+        } else {
+          qx/"mv $fp $archive_path$dir"/;
+        }
       }
-      elsif (-f $File::Find::name) {
-        unlink($File::Find::name);
+      elsif (-f $fp) {
+        unlink($fp);
       }
-      elsif (-d $File::Find::name) {
-        rm_dir($File::Find::name)
+      elsif (-d $fp) {
+        qx\rm -rf $File::Find::name\
       }
       else {
         print "Unknown operation for $File::Find::name";
@@ -86,14 +96,19 @@ sub commit {
 }
 
 sub prune {
-  my ($conf, $root, $verbose, $dry, $dbg, $mtimegt, $archive_path) = @_;
+  my ($conf, $root, $verbose, $dry, $dbg, $mtimegt, $archive_path, $copy) = @_;
   if (! -e $root) {
     print "$root\ndoesn't exist\n";
     exit(1);
   }
   
   while ((my $dir, my $pat_array) = each (%$conf)) {
-    if (! -d "$root/$dir") {
+    my $path;
+    
+    if ($dir eq "/") { $path=$root; }
+    else { $path = "$root/$dir"; }
+
+    if (! -d $path) {
       print "$dir is not a directory\n";
       next;
     }
@@ -101,12 +116,12 @@ sub prune {
     if ($dbg) {
       # Run patterns individually so we know what caught what
       foreach my $pat (@$pat_array) {
-        find(sub { commit($root, $pat, $verbose, $dry, $dbg, $mtimegt, $archive_path); }, "$root/$dir");
+        find(sub { commit($root, $pat, $verbose, $dry, $dbg, $mtimegt, $archive_path, $copy); }, $path);
       }
     }
     else {
       my $pattern = join("|", @$pat_array);
-      find(sub { commit($root, $pattern, $verbose, $dry, $dbg, $mtimegt, $archive_path); }, "$root/$dir");
+      find(sub { commit($root, $pattern, $verbose, $dry, $dbg, $mtimegt, $archive_path, $copy); }, $path);
     }
   }
 }
@@ -135,6 +150,7 @@ sub main {
   my $verbose_flag = 0;
   my $dry_run_flag = 0;
   my $modified_epoch_gt = 0;
+  my $perfer_copy = 0;
   my $archive_path = "";
 
   my $dbg_catch_flag = 0;
@@ -151,20 +167,33 @@ sub main {
     'dbg-conf' => \$dbg_conf,
     'dbg-catch' => \$dbg_catch_flag,
     'archive|a=s' => \$archive_path,
-    'mtimegt|m=s' => \$modified_epoch_gt
+    'mtimegt|m=s' => \$modified_epoch_gt,
+    'copy' => \$perfer_copy
   );
 
   not $root and die2("no directory");
   not $conf and die2("no conf");
 
   my $settings = LoadFile($conf);
-
+  
+  $archive_path = abs_path($archive_path);
+  $root = abs_path($root);
+  
   if ($dbg_conf) {
     dbg($settings);
   }
 
   else {
-    prune($settings, $root, $verbose_flag, $dry_run_flag, $dbg_catch_flag, int($modified_epoch_gt), $archive_path);
+    prune(
+      $settings,
+      $root,
+      $verbose_flag,
+      $dry_run_flag,
+      $dbg_catch_flag,
+      int($modified_epoch_gt*60*60*24),
+      $archive_path,
+      $perfer_copy
+    );
   }
 }
 
