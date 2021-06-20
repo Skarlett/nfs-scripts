@@ -145,24 +145,43 @@ sub dbg
   print $d->Dump;
 }
 
+sub load_exclusions {
+  my $file = @_;
+  open my $info, $file or die "Could not open $file: $!";
+
+  while( my $line = <$info>)  {   
+    $line =~ s/\n|//;
+  
+    #last if $. == 2;
+  }
+
+  close $info;
+}
+
 sub die2 {
   print "error: @_\n$USAGE";
   exit 0;
 }
 
 sub main {
+  my $help_flag = 0;
+
   my $conf = "";
   my $root = "";
-  my $help_flag = 0;
-  my $verbose_flag = 0;
-  my $dry_run_flag = 0;
+
   my $modified_epoch_gt = 0;
-  my $perfer_copy = 0;
+  
   my $archive_path = "";
+  my $perfer_copy = 0;
+
+  my $exclusion_fp = "";
+  my @exclusions = ();
 
   my $dbg_catch_flag = 0;
   my $dbg_conf = 0;
-
+  my $verbose_flag = 0;
+  my $dry_run_flag = 0;
+  
   @ARGV == 0 and die2("no args");
 
   GetOptions(
@@ -175,12 +194,15 @@ sub main {
     'dbg-catch' => \$dbg_catch_flag,
     'archive|a=s' => \$archive_path,
     'mtimegt|m=s' => \$modified_epoch_gt,
+    'exclude|x=s' => $exclusion_fp,
     'copy' => \$perfer_copy
   );
 
   not $root and die2("no directory");
   not $conf and die2("no conf");
 
+  $exclusion_fp and load_exclusions($exclusion_fp, \@exclusions)
+  
   my $settings = LoadFile($conf);
   
   $archive_path = abs_path($archive_path);
