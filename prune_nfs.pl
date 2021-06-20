@@ -21,46 +21,52 @@
 #########################
 use strict;
 use warnings;
-use 5.28.1;
-use YAML qw(LoadFile DumpFile);
-use Data::Dumper;
-use Getopt::Long qw(GetOptions);
-use File::Find;
+
 use Cwd qw(getcwd abs_path);
+use Data::Dumper;
+use File::Find;
+use File::stat;
 use File::Path qw(make_path remove_tree);
+use Getopt::Long qw(GetOptions);
 Getopt::Long::Configure qw(gnu_getopt);
+
+use YAML qw(LoadFile DumpFile);
 
 my $USAGE = "Usage: ./prune_nfs -d /srv/nfs -c /usr/local/etc/prune_nfs/prune.yml 
   OPTS:
-    --dir -d [dir/]
-    --conf -c [conf.yml]  configuration file - see prune.yml
-    --archive -a [dir/]   archive instead of deleting
-    --mtimegt -m [days]   modify time greater than in days
-    
-    --copy          copy instead of moving when archiving
     --help -h       bring up this menu
     --verbose -v    print work
-    --dry-run -k    don't delete files 
+
+    --dir -d [dir]          prune directory
+    --conf -c [conf.yml]    configuration file - see prune.yml
+    --mtimegt -m [days]     filter files modified greater than X days.
+    --archive -a [dir] [--copy] archive instead of deleting, 
+                                --copy will copy the
+                                files instead of moving it.
+    
+    --dry-run -k    don't commit any action on data 
     --dbg-conf      print deserialized yaml
-    --dbg-catch     print what pattern caught the filepath";
+    --dbg-catch     print regular expression";
 
 sub commit {
   my ($root, $pattern, $verbose, $dry, $dbg, $mtimegt, $archive_path, $copy) = @_;
   my $use_archive = 0;
   if ($archive_path) {
-    #qx/mkdir -p $archive_path/;
     $use_archive=1;
   }
   
   if (-e and m/($pattern)/) {
     my $fp = $File::Find::name;
-    # my $sb = stat($File::Find::name);
-    # my $now = time();
+    my $sb = stat($fp);
+    #dbg($sb);
+    $fp =~ s/\n//;
+    
+    my $now = time();
+    my $timestamp = scalar $sb->mtime;
 
-    # print "TIMESTAMP: %s [$now]\n", $sb->mtime;
-    # if (! $now - $sb->mtime > $mtimegt) {
-    #   return;
-    # }
+    if ($now - $sb->mtime < $mtimegt) {
+      return;
+    }
 
     if ($verbose) {
       print "$fp";
@@ -75,21 +81,22 @@ sub commit {
       if ($use_archive == 1 && $File::Find::dir) {
         my $dir = $File::Find::dir;
         $dir =~ s/$root//;
-        
+
+        qx/mkdir -p "$archive_path$dir"/;
         if ($copy) {
-          qx/cp $fp $archive_path$dir/;
+          qx/cp $fp "$archive_path$dir"/;
         } else {
-          qx/"mv $fp $archive_path$dir"/;
+          qx/mv $fp "$archive_path$dir"/;
         }
       }
       elsif (-f $fp) {
         unlink($fp);
       }
       elsif (-d $fp) {
-        qx\rm -rf $File::Find::name\
+        qx\rm -rf $fp\
       }
       else {
-        print "Unknown operation for $File::Find::name";
+        print "Unknown operation for $fp";
       }
     }
   }
