@@ -18,7 +18,6 @@ projects/:
   - \.wasm$
   - \.rlib$
   - \.rmeta$
-  - \.dll$
   - \.gch$
   - \.pch$
   - \.mod$
@@ -28,7 +27,6 @@ projects/:
   - \.lib$
   - \.out$
   - \.app$
-  - \.exe$
   - \.lo$
   - \.slo$
   - \.obj$
@@ -54,6 +52,8 @@ projects/:
   - \.ear$
   - hs_err_pid*
   - \.def$
+  #- \.exe$
+  #- \.dll$
 
   # Generally useless
   - \.bin$
@@ -64,7 +64,7 @@ projects/:
   - \.dist$
   - \.settings$
   
-  #Images
+  # Images
   - \.png$
   - \.gif$
   - \.jpeg$
