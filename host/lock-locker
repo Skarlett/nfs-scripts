@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+LOCKER="/mnt/locker"
+LOCKER_DEV="/dev/mapper/luksfs"
+LOCKER_SHARE="/mnt/locker_share"
+
+#set -ex
+
+if [[ $EUID -ne 0 ]]; then
+  echo "Permission denied."  
+  exit 1;
+fi
+
+if [[ ! $(cat /proc/mounts | grep "$LOCKER ") ]]; then
+    echo "Already locked"
+    exit 1;
+fi
+
+fuser -mwk $LOCKER
+fuser -mwk $LOCKER_SHARE
+
+umount $LOCKER
+cryptsetup close $LOCKER_DEV
+umount $LOCKER_SHARE
+

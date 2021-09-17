@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+########
+# Mount encrypted FS
+########
+
+NFS_HOST="10.0.0.12:/mnt/Encrypted/Locker"
+FINAL_MOUNT="/mnt/locker"
+NFS_MOUNT="/mnt/locker_share"
+FS="/mnt/locker_share/fs"
+_TIMEOUT=300
+LOCK_SCRIPT="/usr/local/sbin/lock-locker"
+
+usage() { echo "$0 usage:" && grep " .)\ #" $0; exit 0; }
+
+set -e
+
+while getopts "s:x:l:m:t:h" arg; do
+  case $arg in
+    s) # path for NFS share, example /mnt/nfs_share
+      NFS_MOUNT=${OPTARG}
+      ;;
+    x) # Set export, example "-h 10.0.0.10:/exports/dir"
+      NFS_HOST=${OPTARG}
+      ;;
+    l) # Luks FS path, example /mnt/nfs_share/fs
+      FS=${OPTARG}
+      ;;
+    m) # Final mount point into encrypted FS. Example /mnt/locker
+      FINAL_MOUNT=${OPTARG}
+      ;;
+    t) # Timeout in seconds, unless set to 0. Example 500, default 300
+      _TIMEOUT=${OPTARG}
+      ;;
+    h) # Display help menu
+      usage
+      ;;
+  esac
+done
+
+if grep -qs $FINAL_MOUNT /proc/mounts; then
+    echo "mounted already."
+    exit 1;
+
+elif [[ $EUID -ne 0 ]]; then
+  echo "Permission denied";
+  exit 1;
+
+fi
+
+# mount nfs
+mount -t nfs $NFS_HOST $NFS_MOUNT
+
+# mount luks
+cryptsetup open $FS luksfs
+
+#mount luks-ext4 to fs
+mount /dev/mapper/luksfs $FINAL_MOUNT
+
+echo -n "mounted at $FINAL_MOUNT "
+
+# outlive session tokens
+# by granting root privs to bash 
+# instead of sleep
+if [[ $_TIMEOUT -ne 0 ]]; then
+  bash -c "sleep $_TIMEOUT && $LOCK_SCRIPT" &
+  echo "and will close in $_TIMEOUT seconds."
+  disown
+else
+  echo " "
+fi
+
